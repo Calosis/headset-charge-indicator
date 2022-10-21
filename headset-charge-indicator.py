@@ -9,6 +9,7 @@
 # startup of the graphical desktop
 
 import argparse
+import os
 from shutil import which
 from sys import argv, exit
 from subprocess import check_output, CalledProcessError
@@ -45,41 +46,13 @@ OPTION_INACTIVE_TIME = '-i'
 global ind
 ind = None
 global chatmix
+global current_icon
+current_icon = "battery-full-symbolic.symbolic"
 chatmix = None
 global charge
 charge = None
 global prevSwitch
 prevSwitch = 0
-
-
-def change_icon():
-    global prevSwitch
-    try:
-        if SWITCHSOUND_BINARY is not None:
-            check_output([SWITCHSOUND_BINARY, "-1"])
-            if prevSwitch == 0:
-                # exit 0 means we could not find out, so set some other icon
-                ind.set_icon_full("audio-card", "Audio Card")
-        else:
-            ind.set_icon_full("audio-headset", "Headset")
-        
-    except CalledProcessError as e:
-        print("Response: " + str(e.returncode) + ": " + str(e))
-        if e.returncode == 1:
-            ind.set_icon_full("audio-speakers", "Audio Card")
-            prevSwitch = 1
-        elif e.returncode == 2:
-            ind.set_icon_full("audio-headset", "Headset")
-            prevSwitch = 2
-        elif e.returncode == 3:
-            ind.set_icon_full("audio-headphones", "USB")
-            prevSwitch = 3
-        elif e.returncode == 4:
-            ind.set_icon_full("audio-input-microphone", "Speakerphone")
-            prevSwitch = 4
-        else:
-            ind.set_icon_full("monitor", "Monitor")
-            prevSwitch = 5
 
 def fetch_capabilities():
     try:
@@ -97,19 +70,37 @@ def fetch_capabilities():
 def change_label():
     try:
         output = check_output([HEADSETCONTROL_BINARY, OPTION_BATTERY, OPTION_SILENT])
-        if args.verbose:
-            print('Bat: ' + str(output, 'utf-8'))
+
+        print('Bat: ' + str(output, 'utf-8'))
 
         # -1 indicates "Battery is charging"
         if int(output) == -1:
-            text = 'Chg'
+            text = 'Charging'
+            current_icon = "battery-good-charging-symbolic.symbolic"
+
         # -2 indicates "Battery is unavailable"
         elif int(output) == -2:
-            text = 'Off'
+            text = 'Not found.'
+            current_icon = "battery-missing-symbolic"
         elif int(output) < 100:
             text = str(output, 'utf-8') + '%'
         else:
             text = str(output, 'utf-8') + '%'
+
+        # Icon set..
+        if int(output) == 100:
+            current_icon = "battery-good-symbolic"
+
+        if int(output) == 75:
+            current_icon = "battery-level-80-symbolic"
+
+        if int(output) == 60:
+            current_icon = "battery-level-60-symbolic"
+
+        if int(output) == 30:
+            current_icon = "battery-level-30-symbolic"
+
+
     except CalledProcessError as e:
         print(e)
         text = 'N/A'
@@ -156,20 +147,6 @@ def set_inactive_time(dummy, level):
 
     return True
 
-
-def set_led(dummy, level):
-    if args.verbose:
-        print("Set LED to: " + str(level))
-    try:
-        output = check_output([HEADSETCONTROL_BINARY, OPTION_LED, str(level), OPTION_SILENT])
-        if args.verbose:
-            print("Result: " + str(output, 'utf-8'))
-    except CalledProcessError as e:
-        print(e)
-
-    return True
-
-
 def switch_sound(dummy, level):
     if args.verbose:
         print("Switch sound to: " + str(level))
@@ -198,27 +175,27 @@ def sidetone_menu():
 
     sidemenu = Gtk.Menu()
 
-    off = Gtk.MenuItem(label="off")
+    off = Gtk.MenuItem(label="Off")
     off.connect("activate", set_sidetone, 0)
     sidemenu.append(off)
     off.show_all()
 
-    low = Gtk.MenuItem(label="low")
+    low = Gtk.MenuItem(label="Low")
     low.connect("activate", set_sidetone, 32)
     sidemenu.append(low)
     low.show_all()
 
-    medium = Gtk.MenuItem(label="medium")
+    medium = Gtk.MenuItem(label="Medium")
     medium.connect("activate", set_sidetone, 64)
     sidemenu.append(medium)
     medium.show_all()
 
-    high = Gtk.MenuItem(label="high")
+    high = Gtk.MenuItem(label="High")
     high.connect("activate", set_sidetone, 96)
     sidemenu.append(high)
     high.show_all()
 
-    maximum = Gtk.MenuItem(label="max")
+    maximum = Gtk.MenuItem(label="Max")
     maximum.connect("activate", set_sidetone, 128)
     sidemenu.append(maximum)
     maximum.show_all()
@@ -232,7 +209,7 @@ def inactive_time_menu():
 
     inactive_time_menu = Gtk.Menu()
 
-    off = Gtk.MenuItem(label="off")
+    off = Gtk.MenuItem(label="Off")
     off.connect("activate", set_inactive_time, 0)
     inactive_time_menu.append(off)
     off.show_all()
@@ -263,22 +240,6 @@ def inactive_time_menu():
     ninety.show_all()
 
     return inactive_time_menu
-
-
-def led_menu():
-    ledmenu = Gtk.Menu()
-
-    off = Gtk.MenuItem(label="off")
-    off.connect("activate", set_led, 0)
-    ledmenu.append(off)
-    off.show_all()
-
-    on = Gtk.MenuItem(label="on")
-    on.connect("activate", set_led, 1)
-    ledmenu.append(on)
-    on.show_all()
-
-    return ledmenu
 
 
 def switch_menu():
@@ -315,7 +276,8 @@ def switch_menu():
 def refresh(dummy):
     cap = fetch_capabilities()
 
-    change_icon()
+    change_label()
+
     if "all" == cap or b'b' in cap:
         change_label()
     if "all" == cap or b'm' in cap:
@@ -323,6 +285,7 @@ def refresh(dummy):
     
     # return True to keep the timer running
     return True
+
 
 
 def quit_app(source):
@@ -368,20 +331,17 @@ if __name__ == "__main__":
     if args.switch_command is not None:
         SWITCHSOUND_BINARY = args.switch_command
 
+
     ind = appindicator.Indicator.new(
         APPINDICATOR_ID,
-        "audio-headset",
-        appindicator.IndicatorCategory.HARDWARE)
+        current_icon,
+        appindicator.IndicatorCategory.APPLICATION_STATUS)
+
     ind.set_status(appindicator.IndicatorStatus.ACTIVE)
     ind.set_label("-1%", '999%')
 
     # create a menu with an Exit-item
     menu = Gtk.Menu()
-
-    menu_items = Gtk.MenuItem(label="Refresh")
-    menu.append(menu_items)
-    menu_items.connect("activate", refresh)
-    menu_items.show_all()
 
     menu_items = Gtk.MenuItem(label="Charge: -1")
     menu.append(menu_items)
@@ -397,11 +357,6 @@ if __name__ == "__main__":
     menu.append(menu_items)
     menu_items.show_all()
     menu_items.set_submenu(sidetone_menu())
-
-    menu_items = Gtk.MenuItem(label="LED")
-    menu.append(menu_items)
-    menu_items.show_all()
-    menu_items.set_submenu(led_menu())
 
     menu_items = Gtk.MenuItem(label="Inactive time")
     menu.append(menu_items)
